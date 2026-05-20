@@ -1,0 +1,37 @@
+# Python bytecode and tool caches — produced when contributors run the
+# action scripts (ruff, mypy, pytest) locally.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Coverage / test reports emitted by python-coverage-action
+.coverage
+coverage.xml
+junit.xml
+
+# Build artifacts emitted by python-build-action
+build/
+dist/
+*.egg-info/
+
+# Trivy SARIF reports emitted by the trivy-* actions
+*.sarif
+
+# Scratch project trees scaffolded by .github/workflows/test-actions.yml
+# (only appear if a self-test job is run locally, e.g. via `act`)
+_fixture/
+
+# Python virtual environments
+.venv/
+venv/
+
+# Local environment files — never commit secrets
+.env
+
+# OS / editor cruft
+.DS_Store
+*.swp
+.idea/
+.vscode/

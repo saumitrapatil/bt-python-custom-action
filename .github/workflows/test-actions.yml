@@ -1,0 +1,219 @@
+name: test-actions
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Run shellcheck on every script
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find actions -type f -name '*.sh' -print0)
+          if (( ${#files[@]} == 0 )); then
+            echo "No shell scripts found." >&2
+            exit 0
+          fi
+          shellcheck "${files[@]}"
+
+  yaml-validate:
+    name: yaml validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Install yamllint
+        run: python -m pip install yamllint
+      - name: Lint YAML
+        run: yamllint -d relaxed actions .github examples
+      - name: Validate every action.yml shape
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import sys, pathlib, yaml
+          failed = False
+          for action_yml in pathlib.Path("actions").glob("*/action.yml"):
+              data = yaml.safe_load(action_yml.read_text())
+              required = {"name", "description", "runs"}
+              missing = required - data.keys()
+              if missing:
+                  print(f"{action_yml}: missing top-level keys: {sorted(missing)}", file=sys.stderr)
+                  failed = True
+                  continue
+              runs = data["runs"]
+              if runs.get("using") != "composite":
+                  print(f"{action_yml}: runs.using is not 'composite'", file=sys.stderr)
+                  failed = True
+              if not isinstance(runs.get("steps"), list) or not runs["steps"]:
+                  print(f"{action_yml}: runs.steps must be a non-empty list", file=sys.stderr)
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PY
+
+  python-lint-action:
+    name: python-lint-action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Scaffold a Python fixture
+        run: |
+          set -euo pipefail
+          mkdir -p _fixture/src
+          cat > _fixture/pyproject.toml <<'EOF'
+          [build-system]
+          requires = ["setuptools>=68"]
+          build-backend = "setuptools.build_meta"
+
+          [project]
+          name = "fixture"
+          version = "0.0.0"
+          requires-python = ">=3.10"
+
+          [tool.setuptools.packages.find]
+          where = ["src"]
+          EOF
+          mkdir -p _fixture/src/fixture
+          cat > _fixture/src/fixture/__init__.py <<'EOF'
+          def hello(name: str) -> str:
+              return f"hello, {name}"
+          EOF
+      - name: Run python-lint-action
+        uses: ./actions/python-lint-action
+        with:
+          working-directory: _fixture
+          run-black: "true"
+          run-mypy: "true"
+
+  python-coverage-action:
+    name: python-coverage-action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Scaffold a Python fixture with a passing test
+        run: |
+          set -euo pipefail
+          mkdir -p _fixture/src/fixture _fixture/tests
+          cat > _fixture/pyproject.toml <<'EOF'
+          [build-system]
+          requires = ["setuptools>=68"]
+          build-backend = "setuptools.build_meta"
+
+          [project]
+          name = "fixture"
+          version = "0.0.0"
+          requires-python = ">=3.10"
+
+          [tool.setuptools.packages.find]
+          where = ["src"]
+          EOF
+          cat > _fixture/src/fixture/__init__.py <<'EOF'
+          def add(a: int, b: int) -> int:
+              return a + b
+          EOF
+          cat > _fixture/tests/test_fixture.py <<'EOF'
+          from fixture import add
+
+          def test_add():
+              assert add(2, 3) == 5
+          EOF
+      - name: Run python-coverage-action
+        uses: ./actions/python-coverage-action
+        with:
+          working-directory: _fixture
+
+  python-build-action:
+    name: python-build-action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Scaffold a buildable Python fixture
+        run: |
+          set -euo pipefail
+          mkdir -p _fixture/src/fixture
+          cat > _fixture/pyproject.toml <<'EOF'
+          [build-system]
+          requires = ["setuptools>=68"]
+          build-backend = "setuptools.build_meta"
+
+          [project]
+          name = "fixture"
+          version = "0.0.1"
+          requires-python = ">=3.10"
+
+          [tool.setuptools.packages.find]
+          where = ["src"]
+          EOF
+          cat > _fixture/src/fixture/__init__.py <<'EOF'
+          __version__ = "0.0.1"
+          EOF
+      - name: Run python-build-action (Python only)
+        uses: ./actions/python-build-action
+        with:
+          working-directory: _fixture
+          python-artifact-name: fixture-dist-${{ github.run_id }}
+
+  trivy-fs-action:
+    name: trivy-fs-action
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Scaffold a Dockerfile so the misconfig scanner has IaC to check
+        run: |
+          set -euo pipefail
+          mkdir -p _fixture
+          cat > _fixture/Dockerfile <<'EOF'
+          FROM python:3.12-slim
+          COPY . /app
+          WORKDIR /app
+          CMD ["python", "-m", "http.server"]
+          EOF
+      - name: Run trivy-fs-action (audit-only — don't fail this CI on findings)
+        uses: ./actions/trivy-fs-action
+        with:
+          exit-code: "0"
+          upload-sarif: "false"
+          category: "trivy-fs-self-test"
+
+  trivy-image-action:
+    name: trivy-image-action
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Pull a tiny known image
+        run: docker pull alpine:3.20
+      - name: Run trivy-image-action (audit-only)
+        uses: ./actions/trivy-image-action
+        with:
+          image-ref: alpine:3.20
+          exit-code: "0"
+          upload-sarif: "false"
+          category: "trivy-image-self-test"
+
+  trufflehog-action:
+    name: trufflehog-action
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+      - name: Run trufflehog-action (audit-only on this repo)
+        uses: ./actions/trufflehog-action
+        with:
+          fail-on-detection: "false"

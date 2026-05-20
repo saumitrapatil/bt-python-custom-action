@@ -1,0 +1,97 @@
+name: "Trivy Image Scan"
+description: "Scan a container image with Trivy, generate SARIF, and upload results to the GitHub Security tab."
+author: "saumitrapatil"
+
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  image-ref:
+    description: "Image reference to scan, e.g. 'ghcr.io/org/app:sha-abc123'."
+    required: true
+  severity:
+    description: "Comma-separated severities to report (CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN)."
+    required: false
+    default: "CRITICAL,HIGH"
+  ignore-unfixed:
+    description: "Only report vulnerabilities for which a fix is available."
+    required: false
+    default: "true"
+  exit-code:
+    description: "Exit code when vulnerabilities are found. Set to '0' to never fail the job."
+    required: false
+    default: "1"
+  scanners:
+    description: "Comma-separated scanners to enable (vuln,secret,config,license)."
+    required: false
+    default: "vuln,secret"
+  vuln-type:
+    description: "Comma-separated vulnerability types to scan (os,library)."
+    required: false
+    default: "os,library"
+  sarif-file:
+    description: "Path of the generated SARIF report."
+    required: false
+    default: "trivy-image-results.sarif"
+  upload-sarif:
+    description: "Upload the SARIF report to the GitHub Security tab."
+    required: false
+    default: "true"
+  category:
+    description: "Category label for the uploaded SARIF (lets multiple Trivy runs coexist)."
+    required: false
+    default: "trivy-image"
+  registry-username:
+    description: "Username for private registry authentication (passed to Trivy via env)."
+    required: false
+    default: ""
+  registry-password:
+    description: "Password/token for private registry authentication (passed to Trivy via env)."
+    required: false
+    default: ""
+  trivy-version:
+    description: "Trivy CLI version to use (e.g. '0.58.0'). Empty = action default."
+    required: false
+    default: ""
+
+outputs:
+  sarif-path:
+    description: "Path to the generated SARIF report."
+    value: ${{ inputs.sarif-file }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Trivy image scan
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      env:
+        TRIVY_USERNAME: ${{ inputs.registry-username }}
+        TRIVY_PASSWORD: ${{ inputs.registry-password }}
+      with:
+        scan-type: "image"
+        image-ref: ${{ inputs.image-ref }}
+        format: "sarif"
+        output: ${{ inputs.sarif-file }}
+        severity: ${{ inputs.severity }}
+        ignore-unfixed: ${{ inputs.ignore-unfixed }}
+        exit-code: ${{ inputs.exit-code }}
+        scanners: ${{ inputs.scanners }}
+        vuln-type: ${{ inputs.vuln-type }}
+        version: ${{ inputs.trivy-version }}
+
+    - name: Upload SARIF to GitHub Security
+      if: always() && inputs.upload-sarif == 'true'
+      uses: github/codeql-action/upload-sarif@458d36d7d4f47d0dd16ca424c1d3cda0060f1360 # v3.35.5
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: ${{ inputs.category }}
+
+    - name: Upload SARIF as artifact
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ inputs.category }}-sarif
+        path: ${{ inputs.sarif-file }}
+        if-no-files-found: warn
+        retention-days: 14

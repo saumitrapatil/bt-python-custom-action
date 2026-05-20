@@ -1,0 +1,99 @@
+name: "TruffleHog Secret Scan"
+description: "Scan the repository for leaked secrets with TruffleHog. Auto-detects PR diff vs full-history scope."
+author: "saumitrapatil"
+
+branding:
+  icon: search
+  color: red
+
+inputs:
+  path:
+    description: "Path to scan."
+    required: false
+    default: "./"
+  scan-mode:
+    description: "'auto' (default), 'diff', or 'full'. 'auto' chooses diff on PRs and full on pushes/schedules."
+    required: false
+    default: "auto"
+  only-verified:
+    description: "Only report verified secrets (low false-positive rate)."
+    required: false
+    default: "true"
+  fail-on-detection:
+    description: "Fail the job if any secrets are detected."
+    required: false
+    default: "true"
+  extra-args:
+    description: "Additional CLI flags forwarded to trufflehog (rarely needed)."
+    required: false
+    default: ""
+
+outputs:
+  results-found:
+    description: "'true' if TruffleHog reported any findings."
+    value: ${{ steps.trufflehog.outputs.results-found }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve scan scope
+      id: scope
+      shell: bash
+      env:
+        INPUT_SCAN_MODE: ${{ inputs.scan-mode }}
+        GH_EVENT_NAME: ${{ github.event_name }}
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PUSH_BEFORE_SHA: ${{ github.event.before }}
+        PUSH_AFTER_SHA: ${{ github.event.after }}
+      run: |
+        set -euo pipefail
+
+        mode="${INPUT_SCAN_MODE}"
+        if [[ "${mode}" == "auto" ]]; then
+          if [[ "${GH_EVENT_NAME}" == "pull_request" || "${GH_EVENT_NAME}" == "pull_request_target" ]]; then
+            mode="diff"
+          else
+            mode="full"
+          fi
+        fi
+
+        base=""
+        head=""
+        if [[ "${mode}" == "diff" ]]; then
+          if [[ "${GH_EVENT_NAME}" == "pull_request" || "${GH_EVENT_NAME}" == "pull_request_target" ]]; then
+            base="${PR_BASE_SHA}"
+            head="${PR_HEAD_SHA}"
+          elif [[ "${GH_EVENT_NAME}" == "push" ]]; then
+            # github.event.before may be all-zeros on a force-push or first push;
+            # the upstream action handles empty base by falling back to a full scan.
+            if [[ -n "${PUSH_BEFORE_SHA}" && "${PUSH_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+              base="${PUSH_BEFORE_SHA}"
+              head="${PUSH_AFTER_SHA}"
+            else
+              printf '[WARN] Push has no usable base SHA — falling back to a full scan.\n' >&2
+              mode="full"
+            fi
+          else
+            printf '[WARN] Event %s does not support diff scope — falling back to a full scan.\n' "${GH_EVENT_NAME}" >&2
+            mode="full"
+          fi
+        fi
+
+        {
+          printf 'mode=%s\n' "${mode}"
+          printf 'base=%s\n' "${base}"
+          printf 'head=%s\n' "${head}"
+        } >> "${GITHUB_OUTPUT}"
+
+    - name: TruffleHog scan
+      id: trufflehog
+      uses: trufflesecurity/trufflehog@37b77001d0174ebec2fcca2bd83ff83a6d45a3ab # v3.95.3
+      with:
+        path: ${{ inputs.path }}
+        base: ${{ steps.scope.outputs.base }}
+        head: ${{ steps.scope.outputs.head }}
+        extra_args: >-
+          ${{ inputs.only-verified == 'true' && '--only-verified' || '' }}
+          ${{ inputs.extra-args }}
+      continue-on-error: ${{ inputs.fail-on-detection != 'true' }}

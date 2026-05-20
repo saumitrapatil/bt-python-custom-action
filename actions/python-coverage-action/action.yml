@@ -1,0 +1,106 @@
+name: "Python Coverage"
+description: "Run pytest with coverage, emit coverage.xml and junit.xml, and optionally upload to SonarQube/SonarCloud or Codecov."
+author: "saumitrapatil"
+
+branding:
+  icon: bar-chart-2
+  color: blue
+
+inputs:
+  python-version:
+    description: "Python version to install."
+    required: false
+    default: "3.12"
+  pytest-args:
+    description: "Additional arguments forwarded to pytest."
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory to run tests from."
+    required: false
+    default: "."
+  artifact-name:
+    description: "Name of the uploaded artifact bundle."
+    required: false
+    default: "coverage-reports"
+  artifact-retention-days:
+    description: "How long GitHub should retain the uploaded artifact."
+    required: false
+    default: "14"
+  fail-on-no-tests:
+    description: "Fail the action if pytest collects no tests (pytest exit code 5)."
+    required: false
+    default: "true"
+  sonar-enabled:
+    description: "Enable SonarQube/SonarCloud integration."
+    required: false
+    default: "false"
+  sonar-token:
+    description: "Sonar token (required if sonar-enabled is true)."
+    required: false
+    default: ""
+  sonar-host-url:
+    description: "SonarQube host URL (defaults to SonarCloud if empty)."
+    required: false
+    default: ""
+  codecov-enabled:
+    description: "Enable Codecov integration."
+    required: false
+    default: "false"
+  codecov-token:
+    description: "Codecov token (required for private repos)."
+    required: false
+    default: ""
+
+outputs:
+  coverage-report-path:
+    description: "Generated coverage XML report path."
+    value: ${{ steps.coverage.outputs.coverage-report-path }}
+  junit-report-path:
+    description: "Generated JUnit report path."
+    value: ${{ steps.coverage.outputs.junit-report-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Run pytest with coverage
+      id: coverage
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INPUT_PYTEST_ARGS: ${{ inputs.pytest-args }}
+        INPUT_FAIL_ON_NO_TESTS: ${{ inputs.fail-on-no-tests }}
+      run: ${{ github.action_path }}/scripts/coverage.sh
+
+    - name: Upload coverage artifacts
+      if: always() && steps.coverage.outputs.coverage-report-path != ''
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          ${{ inputs.working-directory }}/coverage.xml
+          ${{ inputs.working-directory }}/junit.xml
+        retention-days: ${{ inputs.artifact-retention-days }}
+        if-no-files-found: warn
+
+    - name: Sonar scan
+      if: inputs.sonar-enabled == 'true' && inputs.sonar-token != ''
+      uses: SonarSource/sonarqube-scan-action@2f77a1ec69fb1d595b06f35ab27e97605bdef703 # v5.3.2
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+      with:
+        projectBaseDir: ${{ inputs.working-directory }}
+
+    - name: Upload to Codecov
+      if: inputs.codecov-enabled == 'true' && inputs.codecov-token != ''
+      uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe # v5.5.4
+      with:
+        token: ${{ inputs.codecov-token }}
+        files: ${{ inputs.working-directory }}/coverage.xml
+        fail_ci_if_error: true

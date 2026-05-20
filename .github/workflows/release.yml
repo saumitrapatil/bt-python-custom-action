@@ -1,0 +1,99 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver version to release (e.g. '1.2.0'). Do not include the leading 'v'."
+        required: true
+        type: string
+      dry-run:
+        description: "Resolve tags and generate notes but do not push tags or create a release."
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag and release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0   # need full history to move floating tags
+
+      - name: Resolve and validate version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          version="${INPUT_VERSION#v}"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Version '${version}' is not valid semver (expected MAJOR.MINOR.PATCH)."
+            exit 1
+          fi
+
+          tag="v${version}"
+          major="v${version%%.*}"
+
+          if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+            echo "::error::Tag ${tag} already exists. Bump the version and retry."
+            exit 1
+          fi
+
+          echo "tag=${tag}"     >> "${GITHUB_OUTPUT}"
+          echo "major=${major}" >> "${GITHUB_OUTPUT}"
+          echo "Releasing ${tag} (moves floating tag ${major})"
+
+      - name: Configure git identity
+        if: inputs.dry-run != true
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create immutable tag and move floating major tag
+        if: inputs.dry-run != true
+        env:
+          TAG:   ${{ steps.version.outputs.tag }}
+          MAJOR: ${{ steps.version.outputs.major }}
+        run: |
+          set -euo pipefail
+          git tag -a "${TAG}"   -m "Release ${TAG}"
+          git tag -f "${MAJOR}" -m "Floating tag pointing at ${TAG}"
+          git push origin "${TAG}"
+          git push --force origin "${MAJOR}"
+
+      - name: Create GitHub Release with auto-generated notes
+        if: inputs.dry-run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG:      ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "${TAG}" \
+            --title "${TAG}" \
+            --generate-notes \
+            --verify-tag
+
+      - name: Dry-run summary
+        if: inputs.dry-run == true
+        env:
+          TAG:   ${{ steps.version.outputs.tag }}
+          MAJOR: ${{ steps.version.outputs.major }}
+        run: |
+          {
+            echo "## Dry-run for ${TAG}"
+            echo ""
+            echo "- Would create immutable tag: \`${TAG}\`"
+            echo "- Would force-update floating tag: \`${MAJOR}\` → ${TAG}"
+            echo "- Would publish a GitHub Release titled \`${TAG}\` with auto-generated notes"
+          } >> "${GITHUB_STEP_SUMMARY}"

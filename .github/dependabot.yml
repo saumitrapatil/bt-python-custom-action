@@ -1,0 +1,25 @@
+version: 2
+
+updates:
+  # Keep third-party `uses:` pins current in this repo's own CI workflows
+  # (.github/workflows/) and in every composite action under actions/*.
+  # Each pin is a commit SHA; Dependabot advances the SHA and the trailing
+  # version comment when upstream cuts a release.
+  - package-ecosystem: "github-actions"
+    directories:
+      - "/"
+      - "/actions/*"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    # Collapse all action bumps into one PR per run to keep review noise low.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+    open-pull-requests-limit: 5

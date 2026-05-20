@@ -1,0 +1,127 @@
+name: "Python CI"
+description: "One-step Python CI: lint, test + coverage, and security scanning. Composes the org's individual actions behind a single interface."
+author: "saumitrapatil"
+
+branding:
+  icon: zap
+  color: blue
+
+inputs:
+  python-version:
+    description: "Python version to install."
+    required: false
+    default: "3.12"
+  working-directory:
+    description: "Directory to run lint and tests from."
+    required: false
+    default: "."
+
+  run-lint:
+    description: "Run the lint stage (Ruff, optional Black/MyPy)."
+    required: false
+    default: "true"
+  run-tests:
+    description: "Run the test + coverage stage (pytest)."
+    required: false
+    default: "true"
+  run-security:
+    description: "Run the security stage (Trivy filesystem scan + TruffleHog secret scan)."
+    required: false
+    default: "true"
+
+  run-black:
+    description: "In the lint stage, also run `black --check`."
+    required: false
+    default: "false"
+  run-mypy:
+    description: "In the lint stage, also run `mypy`."
+    required: false
+    default: "false"
+
+  pytest-args:
+    description: "Additional arguments forwarded to pytest."
+    required: false
+    default: ""
+  fail-on-no-tests:
+    description: "Fail if pytest collects no tests."
+    required: false
+    default: "true"
+
+  codecov-enabled:
+    description: "Upload coverage to Codecov."
+    required: false
+    default: "false"
+  codecov-token:
+    description: "Codecov token (required for private repos)."
+    required: false
+    default: ""
+  sonar-enabled:
+    description: "Upload coverage/analysis to SonarQube or SonarCloud."
+    required: false
+    default: "false"
+  sonar-token:
+    description: "Sonar token (required if sonar-enabled is true)."
+    required: false
+    default: ""
+
+  trivy-severity:
+    description: "Severities the Trivy filesystem scan should report."
+    required: false
+    default: "CRITICAL,HIGH"
+  trivy-exit-code:
+    description: "Exit code when Trivy finds issues. '0' makes the security scan audit-only."
+    required: false
+    default: "1"
+  upload-sarif:
+    description: "Upload Trivy SARIF results to the GitHub Security tab (needs security-events: write)."
+    required: false
+    default: "true"
+
+outputs:
+  coverage-report-path:
+    description: "Absolute path to the generated coverage.xml (empty if tests were skipped)."
+    value: ${{ steps.coverage.outputs.coverage-report-path }}
+  junit-report-path:
+    description: "Absolute path to the generated junit.xml (empty if tests were skipped)."
+    value: ${{ steps.coverage.outputs.junit-report-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Lint
+      if: inputs.run-lint == 'true'
+      uses: saumitrapatil/bt-python-custom-action/actions/python-lint-action@v1
+      with:
+        python-version: ${{ inputs.python-version }}
+        working-directory: ${{ inputs.working-directory }}
+        run-black: ${{ inputs.run-black }}
+        run-mypy: ${{ inputs.run-mypy }}
+
+    - name: Test and coverage
+      id: coverage
+      if: inputs.run-tests == 'true'
+      uses: saumitrapatil/bt-python-custom-action/actions/python-coverage-action@v1
+      with:
+        python-version: ${{ inputs.python-version }}
+        working-directory: ${{ inputs.working-directory }}
+        pytest-args: ${{ inputs.pytest-args }}
+        fail-on-no-tests: ${{ inputs.fail-on-no-tests }}
+        codecov-enabled: ${{ inputs.codecov-enabled }}
+        codecov-token: ${{ inputs.codecov-token }}
+        sonar-enabled: ${{ inputs.sonar-enabled }}
+        sonar-token: ${{ inputs.sonar-token }}
+
+    - name: Security scan (filesystem + IaC)
+      if: inputs.run-security == 'true'
+      uses: saumitrapatil/bt-python-custom-action/actions/trivy-fs-action@v1
+      with:
+        scan-ref: ${{ inputs.working-directory }}
+        severity: ${{ inputs.trivy-severity }}
+        exit-code: ${{ inputs.trivy-exit-code }}
+        upload-sarif: ${{ inputs.upload-sarif }}
+
+    - name: Secret scan
+      if: inputs.run-security == 'true'
+      uses: saumitrapatil/bt-python-custom-action/actions/trufflehog-action@v1
+      with:
+        path: ${{ inputs.working-directory }}
