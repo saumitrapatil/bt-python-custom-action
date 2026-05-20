@@ -19,9 +19,9 @@ dist/
 # Trivy SARIF reports emitted by the trivy-* actions
 *.sarif
 
-# Scratch project trees scaffolded by .github/workflows/test-actions.yml
-# (only appear if a self-test job is run locally, e.g. via `act`)
-_fixture/
+# NOTE: the self-test fixture dir (_fixture/) is intentionally NOT ignored —
+# test-actions.yml scaffolds and lints it, and ruff/black skip gitignored
+# paths. A local self-test run leaves an untracked _fixture/; delete it after.
 
 # Python virtual environments
 .venv/

@@ -105,7 +105,10 @@ fi
 if [[ "${INPUT_RUN_MYPY:-false}" == "true" ]]; then
   log_info "Running mypy"
   mypy_exit=0
-  mypy . || mypy_exit=$?
+  # Exclude build/ and dist/: a prior `pip install .` builds the project
+  # in-tree, leaving copies of source modules that make mypy report
+  # "Duplicate module" errors.
+  mypy --exclude '(^|/)(build|dist)($|/)' . || mypy_exit=$?
   if (( mypy_exit != 0 )); then
     failures+=("mypy")
   fi
